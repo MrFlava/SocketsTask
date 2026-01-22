@@ -3,17 +3,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocketDisconnect, WebSocket
 
-from connection_manager.manager import ConnectionManager
-from connection_manager.handlers import shutdown_event, graceful_shutdown_handler, periodic_notification_task
 
-manager = ConnectionManager()
+from connection_manager.handlers import shutdown_event, graceful_shutdown_handler, periodic_notification_task, manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     print("Server starting up...")
     task = asyncio.create_task(periodic_notification_task(interval=10))
-    print("task")
     yield
     # Shutdown
     task.cancel()
