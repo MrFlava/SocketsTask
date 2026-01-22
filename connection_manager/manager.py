@@ -1,28 +1,52 @@
-from typing import Set
+import logging
+import redis.asyncio as redis
 from fastapi import WebSocket
 
+from connection_manager.settings import REDIS_URL, REDIS_KEY
 
-class ConnectionManager:
+logger = logging.getLogger(__name__)
+
+
+class RedisConnectionManager:
     def __init__(self):
-        self.active_connections: Set[WebSocket] = set()
+        self.redis_client = None
+        self.local_connections = set()
+
+    async def setup(self):
+        self.redis_client = await redis.from_url(REDIS_URL, decode_responses=True)
+        logger.info("Redis connection established")
+
+    async def teardown(self):
+        if self.redis_client:
+            await self.redis_client.close()
+            logger.info("Redis connection closed")
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections.add(websocket)
-        print(f"Client connected. Total connections: {len(self.active_connections)}")
+        self.local_connections.add(websocket)
+        await self.redis_client.incr(REDIS_KEY)
+        total = await self.get_total_connections()
+        logger.info(f"Client connected. Total across workers: {total}")
 
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.discard(websocket)
-        print(f"Client disconnected. Total connections: {len(self.active_connections)}")
+    async def disconnect(self, websocket: WebSocket):
+        self.local_connections.discard(websocket)
+        current = await self.get_total_connections()
+        if current > 0:
+            await self.redis_client.decr(REDIS_KEY)
+        total = await self.get_total_connections()
+        logger.info(f"Client disconnected. Total across workers: {total}")
+
+    async def get_total_connections(self) -> int:
+        count = await self.redis_client.get(REDIS_KEY)
+        return int(count or 0)
 
     async def broadcast(self, message: str):
-        """Send message to all connected clients"""
-        for connection in self.active_connections.copy():
+        for connection in self.local_connections.copy():
             try:
                 await connection.send_text(message)
             except Exception as e:
-                print(f"Error sending message: {e}")
-                self.disconnect(connection)
+                logger.error(f"Error broadcasting: {e}")
+                await self.disconnect(connection)
 
-    def has_active_connections(self) -> bool:
-        return len(self.active_connections) > 0
+
+manager = RedisConnectionManager()
