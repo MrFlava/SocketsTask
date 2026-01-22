@@ -1,56 +1,61 @@
 import asyncio
-from typing import Set
+import logging
 from datetime import datetime, timedelta
 
-from fastapi import WebSocket
+from connection_manager.manager import manager
+from connection_manager.settings import SHUTDOWN_TIMEOUT, NOTIFICATION_INTERVAL
 
-from connection_manager.manager import  ConnectionManager
-from connection_manager.settings import SHUTDOWN_TIMEOUT
+logger = logging.getLogger(__name__)
 
-# Global variables for connection tracking and shutdown
-active_connections: Set[WebSocket] = set()
-manager = ConnectionManager()
 shutdown_event = asyncio.Event()
-shutdown_timeout = SHUTDOWN_TIMEOUT
+notification_task = None
+
+
+async def periodic_notification_task():
+    """Send notifications every 10 seconds to all connected clients"""
+    logger.info("Periodic notification task started")
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(NOTIFICATION_INTERVAL)
+            if manager.local_connections:
+                message = f"Periodic notification at {datetime.now().isoformat()}"
+                await manager.broadcast(message)
+                logger.info(f"Sent periodic notification to {len(manager.local_connections)} clients")
+        except asyncio.CancelledError:
+            logger.info("Periodic notification task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic notification: {e}")
 
 
 async def graceful_shutdown_handler():
-    """Handle graceful shutdown with timeout"""
-    print("Shutdown signal received. Waiting for connections to close...")
-    start_time = datetime.now()
-    timeout_time = start_time + timedelta(seconds=shutdown_timeout)
+    logger.info("Graceful shutdown initiated...")
+    shutdown_event.set()
 
-    while manager.has_active_connections():
-        if datetime.now() >= timeout_time:
-            print("Shutdown timeout reached. Forcing shutdown...")
+    if notification_task and not notification_task.done():
+        notification_task.cancel()
+        try:
+            await notification_task
+        except asyncio.CancelledError:
+            pass
+
+    start_time = datetime.now()
+    timeout_time = start_time + timedelta(seconds=SHUTDOWN_TIMEOUT)
+
+    while True:
+        total = await manager.get_total_connections()
+        now = datetime.now()
+
+        if total == 0:
+            logger.info("All connections closed.")
             break
 
-        remaining = len(manager.active_connections)
-        print(f"Waiting for {remaining} connection(s) to close...")
+        if now >= timeout_time:
+            logger.warning(f"Timeout reached with {total} connections. Forcing shutdown...")
+            break
+
+        remaining = (timeout_time - now).total_seconds()
+        logger.info(f"Active connections: {total}, Time remaining: {remaining:.0f}s")
         await asyncio.sleep(5)
 
-    print("All connections closed or timeout reached. Shutting down...")
-
-
-async def send_test_notification(message: str = None):
-    """Send a test notification to all active clients"""
-    if message is None:
-        message = f"Test notification at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-
-    await manager.broadcast(message)
-    print(f"Sent notification to {len(manager.active_connections)} client(s): {message}")
-
-async def periodic_notification_task(interval: int = 10):
-    """Background task that sends notifications every N seconds"""
-    while not shutdown_event.is_set():
-        if len(manager.active_connections) > 0:
-            message = f"Test notification at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            await manager.broadcast(message)
-            print(f"Sent notification to {len(manager.active_connections)} client(s)")
-        await asyncio.sleep(interval)
-
-
-def signal_handler(signum, frame):
-    """Handle shutdown signals"""
-    print(f"\nReceived signal {signum}")
-    shutdown_event.set()
+    logger.info("Shutdown complete.")

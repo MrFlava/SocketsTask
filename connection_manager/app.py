@@ -1,22 +1,30 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocketDisconnect, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+from connection_manager.manager import manager
+from connection_manager.handlers import (
+    periodic_notification_task,
+    notification_task,
+    graceful_shutdown_handler,
+    shutdown_event,
+)
 
 
-from connection_manager.handlers import shutdown_event, graceful_shutdown_handler, periodic_notification_task, manager
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    print("Server starting up...")
-    task = asyncio.create_task(periodic_notification_task(interval=10))
+    await manager.setup()
+    notification_task = asyncio.create_task(periodic_notification_task())
+    logger.info("Server started")
     yield
-    # Shutdown
-    task.cancel()
-    if shutdown_event.is_set():
-        await graceful_shutdown_handler()
-    print("Server shut down complete.")
+    await graceful_shutdown_handler()
+    await manager.teardown()
+    logger.info("Server stopped")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -26,31 +34,26 @@ app = FastAPI(lifespan=lifespan)
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        while True:
-            # Receive messages from client
+        while not shutdown_event.is_set():
             data = await websocket.receive_text()
-            print(f"Received: {data}")
-
-            # Echo back to sender
             await websocket.send_text(f"Echo: {data}")
-
-            # Broadcast to all clients
-            await manager.broadcast(f"Notification: {data}")
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        await manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        await manager.disconnect(websocket)
 
 
 @app.post("/notify")
 async def send_notification(message: str):
-    """Endpoint to trigger notifications to all connected clients"""
-    await manager.broadcast(f"Server notification: {message}")
-    return {"status": "notification sent", "recipients": len(manager.active_connections)}
+    await manager.broadcast(f"Manual notification: {message}")
+    total = await manager.get_total_connections()
+    return {"status": "sent", "total_recipients": total}
 
 
 @app.get("/status")
 async def get_status():
-    """Check server status and active connections"""
     return {
-        "active_connections": len(manager.active_connections),
+        "active_connections": await manager.get_total_connections(),
         "shutdown_pending": shutdown_event.is_set()
     }
