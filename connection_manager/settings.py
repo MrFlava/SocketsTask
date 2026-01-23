@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SHUTDOWN_TIMEOUT = int(os.getenv("SHUTDOWN_TIMEOUT"))
-NOTIFICATION_INTERVAL = int(os.getenv("NOTIFICATION_INTERVAL"))
+SHUTDOWN_TIMEOUT = 1800 # 30 minutes in seconds
+NOTIFICATION_INTERVAL =10 # 10 seconds
 APP_PORT = int(os.getenv("PORT"))
 APP_HOST = os.getenv("HOST")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")

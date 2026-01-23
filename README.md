@@ -9,13 +9,15 @@
    ```bash
    docker-compose up -d
 
-3. Install Python dependencies
+3. Copy .env.example and rename on .env (if you want to customise PORT, HOST and REDIS_URL do this in .env)
+
+4. Install Python dependencies
    ```bash
     python3 -m venv venv
     source venv/bin/activate
     pip install -r requirements.txt
 
-4. Run the server
+5. Run the server
    ```bash
     uvicorn main:app --workers 4 
    
