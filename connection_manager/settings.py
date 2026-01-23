@@ -9,4 +9,5 @@ NOTIFICATION_INTERVAL = int(os.getenv("NOTIFICATION_INTERVAL"))
 APP_PORT = int(os.getenv("PORT"))
 APP_HOST = os.getenv("HOST")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-REDIS_KEY = os.getenv("REDIS_KEY", "ws_connections_count")
+REDIS_KEY = "websocket:connections"
+REDIS_SHUTDOWN_KEY = "websocket:shutdown"
